@@ -1,4 +1,4 @@
-#***********************************************************************
+# ***********************************************************************
 #
 #     VICARIOUS CONFIDENTIAL
 #     __________________
@@ -16,7 +16,7 @@
 #     is strictly forbidden unless prior written permission is obtained
 #     from Vicarious Incorporated.
 #
-#***********************************************************************
+# ***********************************************************************
 
 from __future__ import print_function
 from builtins import range
@@ -24,6 +24,7 @@ import numpy as np
 import numba as nb
 from tqdm import trange
 import sys
+
 
 def validate_seq(x, a, n_clones=None):
     """Validate an input sequence of observations x and actions a"""
@@ -43,11 +44,92 @@ def validate_seq(x, a, n_clones=None):
         ), "Number of emissions inconsistent with training sequence"
 
 
+def datagen_structured_obs_room(
+    room,
+    start_r=None,
+    start_c=None,
+    no_left=[],
+    no_right=[],
+    no_up=[],
+    no_down=[],
+    length=10000,
+    seed=42,
+):
+    """room is a 2d numpy array. inaccessible locations are marked by -1.
+    start_r, start_c: starting locations
+
+    In addition, there are invisible obstructions in the room
+    which disallows certain actions from certain states.
+
+    no_left:
+    no_right:
+    no_up:
+    no_down:
+
+    Each of the above are list of states from which the corresponding action is not allowed.
+
+    """
+    np.random.seed(seed)
+    H, W = room.shape
+    if start_r is None or start_c is None:
+        start_r, start_c = np.random.randint(H), np.random.randint(W)
+
+    actions = np.zeros(length, int)
+    x = np.zeros(length, int)  # observations
+    rc = np.zeros((length, 2), int)  # actual r&c
+
+    r, c = start_r, start_c
+    x[0] = room[r, c]
+    rc[0] = r, c
+
+    count = 0
+    while count < length - 1:
+
+        act_list = [0, 1, 2, 3]  # 0: left, 1: right, 2: up, 3: down
+        if (r, c) in no_left:
+            act_list.remove(0)
+        if (r, c) in no_right:
+            act_list.remove(1)
+        if (r, c) in no_up:
+            act_list.remove(2)
+        if (r, c) in no_down:
+            act_list.remove(3)
+
+        a = np.random.choice(act_list)
+
+        # Check for actions taking out of the matrix boundary.
+        prev_r = r
+        prev_c = c
+        if a == 0 and 0 < c:
+            c -= 1
+        elif a == 1 and c < W - 1:
+            c += 1
+        elif a == 2 and 0 < r:
+            r -= 1
+        elif a == 3 and r < H - 1:
+            r += 1
+
+        # Check whether action is taking to inaccessible states.
+        temp_x = room[r, c]
+        if temp_x == -1:
+            r = prev_r
+            c = prev_c
+            pass
+
+        actions[count] = a
+        x[count + 1] = room[r, c]
+        rc[count + 1] = r, c
+        count += 1
+
+    return actions, x, rc
+
+
 class CHMM(object):
-    def __init__(self, n_clones, x, a, pseudocount=0.0, dtype=np.float32):
+    def __init__(self, n_clones, x, a, pseudocount=0.0, dtype=np.float32, seed=42):
         """Construct a CHMM objct. n_clones is an array where n_clones[i] is the
         number of clones assigned to observation i. x and a are the observation sequences
         and action sequences, respectively."""
+        np.random.seed(seed)
         self.n_clones = n_clones
         validate_seq(x, a, self.n_clones)
         assert pseudocount >= 0.0, "The pseudocount should be positive"
@@ -282,6 +364,7 @@ class CHMM(object):
         s_a = backtrace_all(self.T, self.Pi_a, self.n_clones, mess_fwd, state2)
         return s_a
 
+
 def updateCE(CE, E, n_clones, mess_fwd, mess_bwd, x, a):
     timesteps = len(x)
     gamma = mess_fwd * mess_bwd
@@ -294,7 +377,7 @@ def updateCE(CE, E, n_clones, mess_fwd, mess_bwd, x, a):
 
 
 def forwardE(T_tr, E, Pi, n_clones, x, a, store_messages=False):
-    """ Log-probability of a sequence, and optionally, messages"""
+    """Log-probability of a sequence, and optionally, messages"""
     assert (n_clones.sum(), len(n_clones)) == E.shape
     dtype = T_tr.dtype.type
 
@@ -383,7 +466,7 @@ def updateC(C, T, n_clones, mess_fwd, mess_bwd, x, a):
 
 @nb.njit
 def forward(T_tr, Pi, n_clones, x, a, store_messages=False):
-    """ Log-probability of a sequence, and optionally, messages"""
+    """Log-probability of a sequence, and optionally, messages"""
     state_loc = np.hstack((np.array([0], dtype=n_clones.dtype), n_clones)).cumsum()
     dtype = T_tr.dtype.type
 
@@ -467,7 +550,7 @@ def backward(T, n_clones, x, a):
 
 @nb.njit
 def forward_mp(T_tr, Pi, n_clones, x, a, store_messages=False):
-    """ Log-probability of a sequence, and optionally, messages"""
+    """Log-probability of a sequence, and optionally, messages"""
     state_loc = np.hstack((np.array([0], dtype=n_clones.dtype), n_clones)).cumsum()
     dtype = T_tr.dtype.type
 
@@ -566,7 +649,7 @@ def backtraceE(T, E, n_clones, x, a, mess_fwd):
 
 
 def forwardE_mp(T_tr, E, Pi, n_clones, x, a, store_messages=False):
-    """ Log-probability of a sequence, and optionally, messages"""
+    """Log-probability of a sequence, and optionally, messages"""
     assert (n_clones.sum(), len(n_clones)) == E.shape
     dtype = T_tr.dtype.type
 
@@ -601,7 +684,7 @@ def forwardE_mp(T_tr, E, Pi, n_clones, x, a, store_messages=False):
 
 
 def forward_mp_all(T_tr, Pi_x, Pi_a, n_clones, target_state, max_steps):
-    """ Log-probability of a sequence, and optionally, messages"""
+    """Log-probability of a sequence, and optionally, messages"""
     # forward pass
     t, log2_lik = 0, []
     message = Pi_x
