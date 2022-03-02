@@ -1,9 +1,9 @@
 # ***********************************************************************
 #
-#     VICARIOUS CONFIDENTIAL
-#     __________________
+#     VICARIOUS
+#     _________
 #
-#      [2010] - [2021] Vicarious
+#      [2010] - [2022] Vicarious
 #      All Rights Reserved.
 #
 #     NOTICE:  All information contained herein is, and remains
